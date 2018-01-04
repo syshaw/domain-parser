@@ -64,16 +64,50 @@ int request_packet(char *pkt, int *size, char *domainname)
 	return 0;
 }
 
-#if 0
-int pkt_parser(char *pkt)
+int pkt_parser(char *pkt, int pktlen)
 {
+	int i = 0;
 	struct header *hdr = NULL;
 	unsigned char *data = NULL;
 
 	hdr = (struct header*)pkt;
-	pdata = hdr->data;
+	data = hdr->data;
+
+	/*跳过域名*/
+	while(*data++);
+
+	/*只查type=1 class=1时的*/
+	if (htons(((uint16_t *)data)[0]) != 1 && htons(((uint16_t *)data)[1]) != 1) {
+		return -1;
+	}
+
+	data+=4;
+	/*有记录哦*/
+	if (*data == 0xc0) {
+		int datalen = 0;
+
+		/*可能answer中会有type=5(CNAME)项 得跳过*/
+		if (htons(((uint16_t *)data)[1]) == 5) {
+			data+=12;
+			datalen = htons(*((uint16_t *)(data - 2)));
+			data+=datalen;
+		}
+		for(; htons(((uint16_t *)data)[1]) == 1 && htons(((uint16_t *)data)[2]) == 1;) {
+			char realip[16] = {0};
+
+			/*跳过 domain(16bit) type(16bit)   class(16bit) ttl(32bit) = 10byte*/
+			data+=10;
+			datalen = htons(((uint16_t *)data)[0]);
+			data+=2;
+			for (i = 0; i < datalen; i++) {
+				snprintf(realip + strlen(realip), sizeof(realip) - strlen(realip), "%d%s", *data++, ((i + 1) == datalen)?"":".");
+			}
+			printf("ip.address:%s\n", realip);
+		}
+	}
+
+	return 0;
 }
-#endif
 
 int main (int argc, char **argv)
 {
@@ -100,9 +134,6 @@ int main (int argc, char **argv)
 	saddr.sin_addr.s_addr = inet_addr("127.0.1.1");
 
 	request_packet(pkt, &nsend, argv[1]);
-	for (int i =0; i < nsend; i++) {
-		printf("(%d)", pkt[i]);
-	}
 
 	if (sendto(sockfd, pkt, nsend, 0, 
 	    (struct sockaddr *) &saddr, sizeof(saddr)) != -1) {
@@ -120,9 +151,8 @@ int main (int argc, char **argv)
 		memset(pkt, 0, sizeof(pkt));
 		nrecv = recvfrom(sockfd, pkt, sizeof(pkt), 0, (struct sockaddr *)&sa, &len);
 		if (nrecv > 0 && nrecv > sizeof(struct header)) {
-			for (int i = 0; i < nrecv; i++)
-			printf("(%d)", ((unsigned char*)pkt)[i]);
-		printf("recv ok\n");
+			pkt_parser(pkt, nrecv);
+			printf("recv ok\n");
 	}
 		/*解析*/
 	}
